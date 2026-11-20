@@ -19,8 +19,11 @@ from PIL import Image
 from scipy.ndimage import laplace
 from tqdm import tqdm
 
+from refaudit.groups import ita_from_image
+
 QUALITY_COLS = ["sharpness", "brightness", "dynamic_range", "clipped_frac", "jpeg_quality",
                 "megapixels"]
+EXTRA_COLS = ["ita"]  # measured in the same pass but NOT used for quality matching
 
 
 def estimate_jpeg_quality(img: Image.Image) -> float:
@@ -51,6 +54,7 @@ def image_quality(path_or_img: str | Path | Image.Image) -> dict[str, float]:
         "clipped_frac": float(((lum <= 0.02) | (lum >= 0.98)).mean()),
         "jpeg_quality": jpeg_q,
         "megapixels": w * h / 1e6,
+        "ita": ita_from_image(np.asarray(img)),
     }
 
 

@@ -14,7 +14,7 @@ import pandas as pd
 
 from refaudit.data.download import fetch_many
 from refaudit.groups import fst_group
-from refaudit.quality import QUALITY_COLS
+from refaudit.quality import EXTRA_COLS, QUALITY_COLS
 
 CSV_URL = "https://raw.githubusercontent.com/mattgroh/fitzpatrick17k/main/fitzpatrick17k.csv"
 
@@ -55,7 +55,7 @@ def build_manifest(
         "dataset": "fitzpatrick17k",
         "source_id": df["md5hash"],
     })
-    out[QUALITY_COLS] = q[QUALITY_COLS]
+    out[QUALITY_COLS + EXTRA_COLS] = q[QUALITY_COLS + EXTRA_COLS]
     root.mkdir(parents=True, exist_ok=True)
     out.to_csv(root / "manifest.csv", index=False)
     return out

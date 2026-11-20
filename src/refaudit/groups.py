@@ -80,3 +80,25 @@ def ita_group(ita: float) -> str:
     if ita > 10:
         return "medium"
     return "dark"
+
+
+def skin_mask(rgb: np.ndarray) -> np.ndarray:
+    """Rough skin-pixel mask from the classic YCrCb rule (Cr 133-173, Cb 77-127), excluding
+    near-black and near-white pixels. Crude, and itself possibly tone-biased, which is exactly
+    why ITA-based groups are checked against the true labels before being trusted."""
+    rgb = np.asarray(rgb, dtype=np.float32)
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    cr = (r - y) * 0.713 + 128
+    cb = (b - y) * 0.564 + 128
+    return (cr >= 133) & (cr <= 173) & (cb >= 77) & (cb <= 127) & (y > 25) & (y < 245)
+
+
+def ita_from_image(rgb: np.ndarray, min_skin_frac: float = 0.02) -> float:
+    """ITA over detected skin pixels, NaN if too little skin is found. Because the lesion is often
+    inside the mask, this measures 'skin as captured', not constitutive skin tone."""
+    rgb = np.asarray(rgb)
+    m = skin_mask(rgb)
+    if m.mean() < min_skin_frac:
+        return float("nan")
+    return ita_degrees(rgb[m])

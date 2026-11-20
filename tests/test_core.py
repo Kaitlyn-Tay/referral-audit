@@ -7,7 +7,14 @@ from refaudit import counterfactuals as cf
 from refaudit import selective as sel
 from refaudit.data.splits import assign_splits
 from refaudit.dedup import duplicate_clusters, keep_mask
-from refaudit.groups import fst_group, ita_degrees, ita_group, mst_group
+from refaudit.groups import (
+    fst_group,
+    ita_degrees,
+    ita_from_image,
+    ita_group,
+    mst_group,
+    skin_mask,
+)
 from refaudit.heads import HeadEnsemble
 from refaudit.instability import (
     LearnedCombiner,
@@ -201,6 +208,16 @@ def test_pipeline_end_to_end_finds_gap():
     assert list(res.factor_table.columns) == ["underexpose", "blur"]
     assert res.factor_table.loc["dark"].mean() > res.factor_table.loc["light"].mean()
     assert len(res.test_scores) == (manifest["split"] == "test").sum()
+    assert "FIX_consistency_heads" in set(t.index)
+    assert set(res.extras["gap_after_matching_on_factor"]) == {"underexpose", "blur"}
+
+
+def test_skin_mask_and_ita_from_image():
+    skin = np.full((20, 20, 3), [224, 172, 140], dtype=np.uint8)
+    blue = np.full((20, 20, 3), [30, 60, 200], dtype=np.uint8)
+    assert skin_mask(skin).all() and not skin_mask(blue).any()
+    assert np.isnan(ita_from_image(blue))
+    assert ita_from_image(skin) > 10
 
 
 # ---------- quality and dedup ----------

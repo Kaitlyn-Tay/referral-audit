@@ -24,7 +24,7 @@ from sklearn.model_selection import StratifiedKFold
 from refaudit import selective as sel
 from refaudit.counterfactuals import FACTORS
 from refaudit.dedup import duplicate_clusters, keep_mask
-from refaudit.groups import GROUP_ORDER
+from refaudit.groups import GROUP_ORDER, ita_group
 from refaudit.heads import HeadEnsemble
 from refaudit.instability import LearnedCombiner, combined_score, instability_matrix, kl_divergence
 from refaudit.quality import matched_referral_gap, quality_by_group
@@ -69,6 +69,7 @@ def run_audit(
     factors: list[str] | None = None,
     quality: pd.DataFrame | None = None,
     dedup_threshold: float | None = 0.95,
+    consistency_training: bool = True,
 ) -> AuditResult:
     """Run the full audit. `quality` (optional) must be row-aligned with `manifest`."""
     m = manifest.reset_index(drop=True)
@@ -133,12 +134,13 @@ def run_audit(
     groups_test = m.loc[test_rows, "group"].to_numpy(dtype=object)
     c_test = correct["test"]
     score_rows, group_rows = [], []
-    for name, s_test in out_scores["test"].items():
-        thr = sel.threshold_for_coverage(out_scores["cal"][name], coverage)
+
+    def evaluate(name, s_cal, s_test, c_test, groups_test=groups_test):
+        thr = sel.threshold_for_coverage(s_cal, coverage)
         audits = sel.audit_groups(s_test, c_test, groups_test, thr, GROUP_ORDER)
         have = {a.group for a in audits}
 
-        def gap_stat(ix, s_test=s_test, thr=thr):
+        def gap_stat(ix):
             a = sel.audit_groups(s_test[ix], c_test[ix], groups_test[ix], thr, GROUP_ORDER)
             by = {x.group: x for x in a}
             if "dark" not in by or "light" not in by:
@@ -154,6 +156,7 @@ def run_audit(
             "score": name,
             "error_auroc": sel.error_auroc(s_test, c_test),
             "aurc": sel.aurc(s_test, c_test),
+            "full_acc": float(c_test.mean()),
             "test_coverage": float((s_test >= thr).mean()),
             "selective_acc": float(c_test[s_test >= thr].mean()),
             "referral_gap_dark_minus_light": gap,
@@ -163,13 +166,67 @@ def run_audit(
         for a in audits:
             group_rows.append({"score": name, **a.__dict__})
 
+    for name, s_test in out_scores["test"].items():
+        evaluate(name, out_scores["cal"][name], s_test, c_test)
+
+    # FIX: counterfactual-consistency heads, trained on original + mild/moderate (severity 1-3)
+    # capture changes of the training images with the same labels. Evaluated as its own model.
+    if consistency_training and factors:
+        tr = idx["train"]
+        Xs = [feats["orig"][tr]] + [feats[f"{f}@{k}"][tr] for f in factors for k in (1, 2, 3)]
+        ys = np.concatenate([y[tr]] * len(Xs))
+        fixed = HeadEnsemble(n_members=n_members, seed=seed).fit(
+            np.concatenate(Xs).astype(np.float32), ys)
+        fixed_scores, fixed_correct = {}, {}
+        for s in ("cal", "test"):
+            p_fix = fixed.predict_proba(feats["orig"][idx[s]].astype(np.float32))
+            fixed_scores[s] = sel.msp(p_fix)
+            fixed_correct[s] = p_fix.argmax(1) == y[idx[s]]
+        evaluate("FIX_consistency_heads", fixed_scores["cal"], fixed_scores["test"],
+                 fixed_correct["test"])
+
+    # ATTRIBUTE: referral gap left after matching dark and light images on each factor's
+    # instability. A factor whose matching shrinks the gap most is the biggest driver.
+    thr_msp = sel.threshold_for_coverage(out_scores["cal"]["msp_ensemble"], coverage)
+    referred_msp = out_scores["test"]["msp_ensemble"] < thr_msp
+    if {"dark", "light"} <= set(groups_test):
+        inst_df = pd.DataFrame(mats["test"], columns=fnames)
+        attribution = {}
+        for f in fnames:
+            raw, matched, _ = matched_referral_gap(referred_msp, groups_test, inst_df, cols=(f,),
+                                                   n_bins=4)
+            attribution[f] = matched
+        extras["referral_gap_raw_msp"] = float(raw)
+        extras["gap_after_matching_on_factor"] = attribution
+
+    # LABEL-FREE: replace tone labels with ITA measured from pixels and compare the gap estimate
+    if "ita" in m:
+        ita = m.loc[test_rows, "ita"].to_numpy(dtype=float)
+        ok = ~np.isnan(ita)
+        ita_groups = np.array([ita_group(v) if not np.isnan(v) else None for v in ita],
+                              dtype=object)
+        extras["ita_coverage_frac"] = float(ok.mean())
+        extras["ita_vs_label_group_agreement"] = float(
+            (ita_groups[ok] == groups_test[ok]).mean()) if ok.any() else float("nan")
+        def _gap(grp):
+            d, li = grp == "dark", grp == "light"
+            if d.sum() == 0 or li.sum() == 0:
+                return float("nan")
+            return float(referred_msp[d].mean() - referred_msp[li].mean())
+        extras["gap_true_labels"] = _gap(groups_test)
+        extras["gap_ita_estimate"] = _gap(ita_groups)
+        if ok.sum() >= 10:
+            extras["spearman_ita_vs_tone_raw"] = float(spearmanr(
+                ita[ok], m.loc[test_rows, "tone_raw"].to_numpy(dtype=float)[ok],
+                nan_policy="omit")[0])
+
     factor_df = pd.DataFrame(mats["test"], columns=fnames)
     factor_df["group"] = groups_test
     factor_table = factor_df.groupby("group")[fnames].mean().reindex(
         [g for g in GROUP_ORDER if g in set(groups_test)])
 
     # label-free check: does mean instability per tone level track referral rate per tone level?
-    thr = sel.threshold_for_coverage(out_scores["cal"]["msp_ensemble"], coverage)
+    thr = thr_msp
     tone = m.loc[test_rows, "tone_raw"].to_numpy()
     tdf = pd.DataFrame({
         "tone_raw": tone,

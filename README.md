@@ -81,6 +81,12 @@ Code map:
 - `groups.csv` per score and group: coverage, referral rate, selective and full accuracy
 - `factors.csv` mean instability per factor and group (the "cause" table)
 - `tone_levels.csv` per tone level: referral rate vs mean instability (+ Spearman rho)
+- `quality_by_group.csv` median photo quality per group
+- `extras.json` near-duplicates removed; quality-matched gap; gap left after matching on each
+  factor's instability (attribution); ITA-from-pixels gap estimate vs true-label gap (label-free
+  check); real-vs-synthetic shift agreement on multi-photo SCIN cases
+- the `FIX_consistency_heads` row in `scores.csv`: heads retrained on original + mild capture
+  changes; compare its referral gap and accuracy with `msp_ensemble`
 - `referral_by_group.png`, `instability_by_factor.png`
 
 ## Scope and safety
