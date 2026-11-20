@@ -8,11 +8,13 @@ Outputs (all on the TEST split, thresholds fitted on CAL):
 - group_table:  coverage / referral rate / selective accuracy per group, per score
 - factor_table: mean per-factor instability per group (which capture condition hurts whom)
 - tone_table:   per raw tone level, referral rate vs mean instability (label-free prediction check)
+- quality_table: median photo quality per group (if quality measures are given)
+- extras:       dedup counts, quality-matched referral gap, real-vs-synthetic shift check
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -21,9 +23,11 @@ from sklearn.model_selection import StratifiedKFold
 
 from refaudit import selective as sel
 from refaudit.counterfactuals import FACTORS
+from refaudit.dedup import duplicate_clusters, keep_mask
 from refaudit.groups import GROUP_ORDER
 from refaudit.heads import HeadEnsemble
 from refaudit.instability import LearnedCombiner, combined_score, instability_matrix, kl_divergence
+from refaudit.quality import matched_referral_gap, quality_by_group
 
 
 @dataclass
@@ -33,6 +37,8 @@ class AuditResult:
     factor_table: pd.DataFrame
     tone_table: pd.DataFrame
     test_scores: pd.DataFrame  # per-test-image scores, for plotting
+    quality_table: pd.DataFrame | None = None
+    extras: dict = field(default_factory=dict)
 
 
 def _variants_of(feats: dict[str, np.ndarray], prefix: str) -> list[str]:
@@ -61,8 +67,23 @@ def run_audit(
     seed: int = 0,
     n_boot: int = 1000,
     factors: list[str] | None = None,
+    quality: pd.DataFrame | None = None,
+    dedup_threshold: float | None = 0.95,
 ) -> AuditResult:
+    """Run the full audit. `quality` (optional) must be row-aligned with `manifest`."""
     m = manifest.reset_index(drop=True)
+    extras: dict = {"n_images": len(m)}
+    if quality is not None:
+        quality = quality.reset_index(drop=True)
+    if dedup_threshold is not None:
+        src = m["source_id"].to_numpy() if "source_id" in m else None
+        clusters = duplicate_clusters(feats["orig"], dedup_threshold, src)
+        keep = keep_mask(clusters, src)
+        extras["n_near_duplicates_removed"] = int((~keep).sum())
+        m = m[keep].reset_index(drop=True)
+        feats = {k: v[keep] for k, v in feats.items()}
+        if quality is not None:
+            quality = quality[keep].reset_index(drop=True)
     classes = np.array(sorted(m["label"].unique()))
     y = np.searchsorted(classes, m["label"].to_numpy())
     idx = {s: np.flatnonzero(m["split"].to_numpy() == s) for s in ("train", "cal", "test")}
@@ -163,6 +184,38 @@ def run_audit(
         rho, p = spearmanr(tone_table["mean_instability"], tone_table["referral_rate"])
         tone_table.attrs["spearman_rho"], tone_table.attrs["spearman_p"] = float(rho), float(p)
 
+    # photo quality: by group, and referral gap on quality-matched subsets
+    quality_table = None
+    if quality is not None:
+        q_test = quality.loc[test_rows].reset_index(drop=True)
+        quality_table = quality_by_group(q_test, groups_test, GROUP_ORDER)
+        if {"dark", "light"} <= set(groups_test):
+            raw, matched, n_used = matched_referral_gap(
+                out_scores["test"]["msp_ensemble"] < thr, groups_test, q_test)
+            extras.update(referral_gap_raw=raw, referral_gap_quality_matched=matched,
+                          matched_n_dark=n_used)
+
+    # real vs synthetic: for cases with 2+ photos in test, does the real shift between photos of
+    # the same case track our synthetic instability?
+    if "source_id" in m:
+        src_test = m.loc[test_rows, "source_id"].to_numpy()
+        p_test = heads.predict_proba(feats["orig"][test_rows].astype(np.float32))
+        raw_inst = mats["test"].mean(axis=1)
+        real, synth = [], []
+        for sid in pd.unique(src_test):
+            ix = np.flatnonzero(src_test == sid)
+            if len(ix) < 2:
+                continue
+            a, b = ix[0], ix[1]
+            real.append(0.5 * (kl_divergence(p_test[a], p_test[b])
+                               + kl_divergence(p_test[b], p_test[a])))
+            synth.append(0.5 * (raw_inst[a] + raw_inst[b]))
+        if len(real) >= 10:
+            rho, p = spearmanr(synth, real)
+            extras.update(real_shift_cases=len(real), real_vs_synth_spearman=float(rho),
+                          real_vs_synth_p=float(p), real_shift_median_kl=float(np.median(real)),
+                          synth_median_kl=float(np.median(synth)))
+
     test_scores = pd.DataFrame(out_scores["test"])
     test_scores["group"] = groups_test
     test_scores["correct"] = c_test
@@ -170,4 +223,4 @@ def run_audit(
         test_scores[f"inst_{f}"] = mats["test"][:, j]
 
     return AuditResult(pd.DataFrame(score_rows), pd.DataFrame(group_rows), factor_table,
-                       tone_table, test_scores)
+                       tone_table, test_scores, quality_table, extras)

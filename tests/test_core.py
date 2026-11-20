@@ -6,6 +6,7 @@ from PIL import Image
 from refaudit import counterfactuals as cf
 from refaudit import selective as sel
 from refaudit.data.splits import assign_splits
+from refaudit.dedup import duplicate_clusters, keep_mask
 from refaudit.groups import fst_group, ita_degrees, ita_group, mst_group
 from refaudit.heads import HeadEnsemble
 from refaudit.instability import (
@@ -16,6 +17,7 @@ from refaudit.instability import (
     kl_divergence,
 )
 from refaudit.pipeline import run_audit
+from refaudit.quality import image_quality, matched_referral_gap
 
 
 @pytest.fixture
@@ -190,7 +192,8 @@ def test_head_ensemble_shapes():
 def test_pipeline_end_to_end_finds_gap():
     manifest, feats = _synthetic()
     manifest = assign_splits(manifest)
-    res = run_audit(manifest, feats, coverage=0.8, n_members=3, n_boot=100)
+    res = run_audit(manifest, feats, coverage=0.8, n_members=3, n_boot=100,
+                    dedup_threshold=None)
     t = res.scores_table.set_index("score")
     assert {"msp_ensemble", "random_tta", "rotation_asrs", "cf_unweighted", "cf_learned",
             "cf_learned+msp"} <= set(t.index)
@@ -198,3 +201,39 @@ def test_pipeline_end_to_end_finds_gap():
     assert list(res.factor_table.columns) == ["underexpose", "blur"]
     assert res.factor_table.loc["dark"].mean() > res.factor_table.loc["light"].mean()
     assert len(res.test_scores) == (manifest["split"] == "test").sum()
+
+
+# ---------- quality and dedup ----------
+
+def test_quality_detects_blur_and_jpeg(img, tmp_path):
+    sharp = image_quality(img)
+    blurred = image_quality(cf.apply(img, "blur", 5))
+    assert blurred["sharpness"] < sharp["sharpness"]
+    p = tmp_path / "x.jpg"
+    img.save(p, quality=20)
+    assert image_quality(p)["jpeg_quality"] < 40
+    assert np.isnan(sharp["jpeg_quality"])  # in-memory image has no JPEG tables
+
+
+def test_matched_gap_removes_quality_confound():
+    rng = np.random.default_rng(0)
+    n = 4000
+    groups = rng.choice(["light", "dark"], n)
+    # dark photos are blurrier; referral depends ONLY on blur
+    sharp = rng.normal(np.where(groups == "dark", -1.0, 1.0), 1.0)
+    referred = rng.random(n) < 1 / (1 + np.exp(3 * sharp))
+    q = pd.DataFrame({"sharpness": sharp, "brightness": rng.random(n)})
+    raw, matched, used = matched_referral_gap(referred, groups, q, n_bins=8)
+    assert raw > 0.2
+    assert abs(matched) < raw / 2 and used > 0
+
+
+def test_dedup_links_copies_but_not_same_source():
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(6, 32))
+    X[1] = X[0] + 1e-3  # copy of 0, different source -> drop one
+    X[3] = X[2] + 1e-3  # copy of 2, same source -> keep both
+    src = np.array(["a", "b", "c", "c", "d", "e"], dtype=object)
+    cl = duplicate_clusters(X, 0.99, src)
+    assert cl[0] == cl[1] and cl[2] != cl[3]
+    assert keep_mask(cl, src).tolist() == [True, False, True, True, True, True]

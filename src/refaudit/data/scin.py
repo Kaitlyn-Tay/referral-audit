@@ -16,6 +16,7 @@ import pandas as pd
 
 from refaudit.data.download import fetch_many
 from refaudit.groups import fst_group, mst_group
+from refaudit.quality import QUALITY_COLS
 
 BUCKET = "https://storage.googleapis.com/dx-scin-public-data"
 CASES_URL = f"{BUCKET}/dataset/scin_cases.csv"
@@ -77,6 +78,7 @@ def build_manifest(
                                                         strict=True)]
     ok = fetch_many(jobs, workers=workers, desc="scin")
     df = df[[Path(p) in ok for p in df["image_path"]]]
+    q = pd.DataFrame([ok[Path(p)] for p in df["image_path"]], index=df.index)
     out = pd.DataFrame({
         "image_path": df["image_path"],
         "label": df["label"],
@@ -86,6 +88,7 @@ def build_manifest(
         "source_id": df["case_id"],  # split by case so photos of one person stay together
         "shot_type": df["shot_type"],
     })
+    out[QUALITY_COLS] = q[QUALITY_COLS]
     root.mkdir(parents=True, exist_ok=True)
     out.to_csv(root / "manifest.csv", index=False)
     return out

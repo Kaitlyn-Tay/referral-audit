@@ -18,6 +18,7 @@ import pandas as pd  # noqa: E402
 
 from refaudit.groups import GROUP_ORDER  # noqa: E402
 from refaudit.pipeline import run_audit  # noqa: E402
+from refaudit.quality import QUALITY_COLS  # noqa: E402
 
 COLORS = {"light": "#E8B58F", "medium": "#A86B45", "dark": "#5A3825"}
 
@@ -63,12 +64,23 @@ def main():
     ap.add_argument("--coverage", type=float, default=0.8)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--n-boot", type=int, default=1000)
+    ap.add_argument("--quality", default=None,
+                    help="quality.csv (default: quality columns already in the manifest)")
+    ap.add_argument("--dedup", type=float, default=0.95,
+                    help="cosine threshold for near-duplicate removal; 0 disables")
     args = ap.parse_args()
 
     manifest = pd.read_csv(args.manifest)
     with np.load(args.features) as f:
         feats = {k: f[k] for k in f.files}
-    res = run_audit(manifest, feats, coverage=args.coverage, seed=args.seed, n_boot=args.n_boot)
+    if args.quality:
+        quality = pd.read_csv(args.quality)
+    elif set(QUALITY_COLS) <= set(manifest.columns):
+        quality = manifest[QUALITY_COLS]
+    else:
+        quality = None
+    res = run_audit(manifest, feats, coverage=args.coverage, seed=args.seed, n_boot=args.n_boot,
+                    quality=quality, dedup_threshold=args.dedup or None)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -77,6 +89,9 @@ def main():
     res.factor_table.to_csv(out / "factors.csv")
     res.tone_table.to_csv(out / "tone_levels.csv", index=False)
     res.test_scores.to_csv(out / "test_scores.csv", index=False)
+    if res.quality_table is not None:
+        res.quality_table.to_csv(out / "quality_by_group.csv")
+    pd.Series(res.extras).to_json(out / "extras.json", indent=1)
     plot_referral(res.group_table, list(res.scores_table["score"]), out / "referral_by_group.png")
     plot_factors(res.factor_table, out / "instability_by_factor.png")
 
@@ -88,6 +103,10 @@ def main():
         print(f"spearman(instability, referral) across tone levels: "
               f"rho={res.tone_table.attrs['spearman_rho']:.2f} "
               f"p={res.tone_table.attrs['spearman_p']:.3f}")
+    if res.quality_table is not None:
+        print("\nmedian photo quality per group:\n", res.quality_table.round(3))
+    print("\nextras:", {k: round(v, 3) if isinstance(v, float) else v
+                        for k, v in res.extras.items()})
     print(f"\nwrote {out}")
 
 

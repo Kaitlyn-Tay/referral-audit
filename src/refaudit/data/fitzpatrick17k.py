@@ -14,6 +14,7 @@ import pandas as pd
 
 from refaudit.data.download import fetch_many
 from refaudit.groups import fst_group
+from refaudit.quality import QUALITY_COLS
 
 CSV_URL = "https://raw.githubusercontent.com/mattgroh/fitzpatrick17k/main/fitzpatrick17k.csv"
 
@@ -45,6 +46,7 @@ def build_manifest(
     lost = (~df["downloaded"]).sum()
     print(f"downloaded {df['downloaded'].sum()} / {len(df)} images ({lost} dead links)")
     df = df[df["downloaded"]]
+    q = pd.DataFrame([ok[Path(p)] for p in df["image_path"]], index=df.index)
     out = pd.DataFrame({
         "image_path": df["image_path"],
         "label": df[label_col],
@@ -53,6 +55,7 @@ def build_manifest(
         "dataset": "fitzpatrick17k",
         "source_id": df["md5hash"],
     })
+    out[QUALITY_COLS] = q[QUALITY_COLS]
     root.mkdir(parents=True, exist_ok=True)
     out.to_csv(root / "manifest.csv", index=False)
     return out
