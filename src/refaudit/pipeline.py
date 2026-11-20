@@ -73,6 +73,7 @@ def run_audit(
     group_order: list[str] | None = None,
     gap_high: str = "dark",
     gap_low: str = "light",
+    min_group_n: int = 30,
 ) -> AuditResult:
     """Run the full audit. `quality` (optional) must be row-aligned with `manifest`."""
     m = manifest.reset_index(drop=True)
@@ -154,7 +155,8 @@ def run_audit(
                 return float("nan")
             return by[gap_high].referral_rate - by[gap_low].referral_rate
 
-        if {gap_high, gap_low} <= have:
+        n_by = {a.group: a.n for a in audits}
+        if {gap_high, gap_low} <= have and min(n_by[gap_high], n_by[gap_low]) >= min_group_n:
             gap, lo, hi = sel.bootstrap_ci(gap_stat, len(s_test), n_boot=n_boot, seed=seed,
                                            stratify=groups_test)
         else:
@@ -167,6 +169,8 @@ def run_audit(
             "test_coverage": float((s_test >= thr).mean()),
             "selective_acc": float(c_test[s_test >= thr].mean()),
             "referral_gap": gap,
+            "n_high": n_by.get(gap_high, 0),
+            "n_low": n_by.get(gap_low, 0),
             "gap_ci_low": lo,
             "gap_ci_high": hi,
         })

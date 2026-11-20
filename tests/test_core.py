@@ -199,7 +199,7 @@ def test_head_ensemble_shapes():
 def test_pipeline_end_to_end_finds_gap():
     manifest, feats = _synthetic()
     manifest = assign_splits(manifest)
-    res = run_audit(manifest, feats, coverage=0.8, n_members=3, n_boot=100,
+    res = run_audit(manifest, feats, coverage=0.8, n_members=3, n_boot=100, min_group_n=5,
                     dedup_threshold=None)
     t = res.scores_table.set_index("score")
     assert {"msp_ensemble", "random_tta", "rotation_asrs", "cf_unweighted", "cf_learned",
