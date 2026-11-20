@@ -1,5 +1,7 @@
 # referral-audit
 
+*Who does the AI defer? Attributing abstention gaps to capture conditions without group labels.*
+
 **Who gets referred, and why?** Auditing selective skin-image classifiers with capture-condition
 counterfactuals.
 
@@ -29,8 +31,11 @@ labels at test time.
 | [Fitzpatrick17k](https://github.com/mattgroh/fitzpatrick17k) | ~16.5k clinical | Fitzpatrick 1-6 | Images hosted on atlas sites; some links dead. CC BY-NC-SA 3.0 |
 | [SCIN](https://github.com/google-research-datasets/scin) | ~10k phone photos (5k cases) | Monk 1-10, Fitzpatrick | Public GCS bucket. Darker tones are rare (Monk 7-10 is about 4% of cases) |
 
-Planned: PAD-UFES-20 (phone photos), Waterbirds (background shift sanity check), AZH wounds
-(label-free case study using ITA tone measured from pixels, see `refaudit.groups.ita_degrees`).
+| [FairFace](https://huggingface.co/datasets/HuggingFaceM4/FairFace) | ~108k faces (20k sampled) | race (7 groups) + ITA | Non-medical domain; task = age group. `pip install datasets` |
+| [Waterbirds](https://github.com/p-lambda/wilds) | ~11.8k | bird x background | No-people sanity check; official splits. `pip install wilds` |
+
+Gap reported: `--gap-high` minus `--gap-low` (defaults dark minus light; FairFace Black minus
+White; Waterbirds waterbird_on_land minus waterbird_on_water).
 
 ## Quick start
 

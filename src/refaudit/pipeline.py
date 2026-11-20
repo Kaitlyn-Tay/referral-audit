@@ -70,10 +70,17 @@ def run_audit(
     quality: pd.DataFrame | None = None,
     dedup_threshold: float | None = 0.95,
     consistency_training: bool = True,
+    group_order: list[str] | None = None,
+    gap_high: str = "dark",
+    gap_low: str = "light",
 ) -> AuditResult:
     """Run the full audit. `quality` (optional) must be row-aligned with `manifest`."""
     m = manifest.reset_index(drop=True)
-    extras: dict = {"n_images": len(m)}
+    extras: dict = {"n_images": len(m), "gap": f"{gap_high} minus {gap_low}"}
+    present = list(pd.unique(m["group"].dropna()))
+    preferred = group_order or GROUP_ORDER
+    order = [g for g in preferred if g in present] + sorted(
+        g for g in present if g not in preferred)
     if quality is not None:
         quality = quality.reset_index(drop=True)
     if dedup_threshold is not None:
@@ -137,17 +144,17 @@ def run_audit(
 
     def evaluate(name, s_cal, s_test, c_test, groups_test=groups_test):
         thr = sel.threshold_for_coverage(s_cal, coverage)
-        audits = sel.audit_groups(s_test, c_test, groups_test, thr, GROUP_ORDER)
+        audits = sel.audit_groups(s_test, c_test, groups_test, thr, order)
         have = {a.group for a in audits}
 
         def gap_stat(ix):
-            a = sel.audit_groups(s_test[ix], c_test[ix], groups_test[ix], thr, GROUP_ORDER)
+            a = sel.audit_groups(s_test[ix], c_test[ix], groups_test[ix], thr, order)
             by = {x.group: x for x in a}
-            if "dark" not in by or "light" not in by:
+            if gap_high not in by or gap_low not in by:
                 return float("nan")
-            return by["dark"].referral_rate - by["light"].referral_rate
+            return by[gap_high].referral_rate - by[gap_low].referral_rate
 
-        if {"dark", "light"} <= have:
+        if {gap_high, gap_low} <= have:
             gap, lo, hi = sel.bootstrap_ci(gap_stat, len(s_test), n_boot=n_boot, seed=seed,
                                            stratify=groups_test)
         else:
@@ -159,7 +166,7 @@ def run_audit(
             "full_acc": float(c_test.mean()),
             "test_coverage": float((s_test >= thr).mean()),
             "selective_acc": float(c_test[s_test >= thr].mean()),
-            "referral_gap_dark_minus_light": gap,
+            "referral_gap": gap,
             "gap_ci_low": lo,
             "gap_ci_high": hi,
         })
@@ -189,12 +196,12 @@ def run_audit(
     # instability. A factor whose matching shrinks the gap most is the biggest driver.
     thr_msp = sel.threshold_for_coverage(out_scores["cal"]["msp_ensemble"], coverage)
     referred_msp = out_scores["test"]["msp_ensemble"] < thr_msp
-    if {"dark", "light"} <= set(groups_test):
+    if {gap_high, gap_low} <= set(groups_test):
         inst_df = pd.DataFrame(mats["test"], columns=fnames)
         attribution = {}
         for f in fnames:
             raw, matched, _ = matched_referral_gap(referred_msp, groups_test, inst_df, cols=(f,),
-                                                   n_bins=4)
+                                                   n_bins=4, high=gap_high, low=gap_low)
             attribution[f] = matched
         extras["referral_gap_raw_msp"] = float(raw)
         extras["gap_after_matching_on_factor"] = attribution
@@ -209,7 +216,7 @@ def run_audit(
         extras["ita_vs_label_group_agreement"] = float(
             (ita_groups[ok] == groups_test[ok]).mean()) if ok.any() else float("nan")
         def _gap(grp):
-            d, li = grp == "dark", grp == "light"
+            d, li = grp == gap_high, grp == gap_low
             if d.sum() == 0 or li.sum() == 0:
                 return float("nan")
             return float(referred_msp[d].mean() - referred_msp[li].mean())
@@ -245,10 +252,11 @@ def run_audit(
     quality_table = None
     if quality is not None:
         q_test = quality.loc[test_rows].reset_index(drop=True)
-        quality_table = quality_by_group(q_test, groups_test, GROUP_ORDER)
-        if {"dark", "light"} <= set(groups_test):
+        quality_table = quality_by_group(q_test, groups_test, order)
+        if {gap_high, gap_low} <= set(groups_test):
             raw, matched, n_used = matched_referral_gap(
-                out_scores["test"]["msp_ensemble"] < thr, groups_test, q_test)
+                out_scores["test"]["msp_ensemble"] < thr, groups_test, q_test,
+                high=gap_high, low=gap_low)
             extras.update(referral_gap_raw=raw, referral_gap_quality_matched=matched,
                           matched_n_dark=n_used)
 

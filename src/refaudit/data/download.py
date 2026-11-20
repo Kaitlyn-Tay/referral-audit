@@ -55,3 +55,13 @@ def fetch_many(
             if q is not None:
                 ok[futs[f]] = q
     return ok
+
+
+def save_pil(img: Image.Image, dest: Path, max_side: int = 768) -> dict[str, float]:
+    """Measure quality on an in-memory image, then save it like fetch_image does."""
+    quality = image_quality(img)
+    out = img.convert("RGB")
+    out.thumbnail((max_side, max_side), Image.LANCZOS)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    out.save(dest, format="JPEG", quality=95)
+    return quality

@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 torch = ["torch>=2.1", "timm>=1.0"]
+extra-data = ["datasets>=2.18", "wilds>=2.0"]
 dev = ["pytest>=8.0", "ruff>=0.5"]
 
 [build-system]

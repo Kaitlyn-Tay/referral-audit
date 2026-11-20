@@ -16,24 +16,29 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from refaudit.groups import GROUP_ORDER  # noqa: E402
 from refaudit.pipeline import run_audit  # noqa: E402
 from refaudit.quality import QUALITY_COLS  # noqa: E402
 
-COLORS = {"light": "#E8B58F", "medium": "#A86B45", "dark": "#5A3825"}
+TONE_COLORS = {"light": "#E8B58F", "medium": "#A86B45", "dark": "#5A3825"}
+OTHER_COLORS = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B3", "#937860", "#DA8BC3"]
+
+
+def color_for(group: str, j: int) -> str:
+    return TONE_COLORS.get(group, OTHER_COLORS[j % len(OTHER_COLORS)])
 
 
 def plot_referral(group_table: pd.DataFrame, scores: list[str], path: Path):
     fig, ax = plt.subplots(figsize=(7, 3.5))
-    w = 0.8 / len(GROUP_ORDER)
+    groups = list(pd.unique(group_table["group"]))
+    w = 0.8 / len(groups)
     x = np.arange(len(scores))
-    for j, g in enumerate(GROUP_ORDER):
+    for j, g in enumerate(groups):
         vals = [group_table.query("score == @s and group == @g")["referral_rate"].mean()
                 for s in scores]
-        ax.bar(x + (j - 1) * w, vals, w, label=g, color=COLORS[g])
+        ax.bar(x + (j - (len(groups) - 1) / 2) * w, vals, w, label=g, color=color_for(g, j))
     ax.set_xticks(x, scores, rotation=30, ha="right")
     ax.set_ylabel("referral rate (test)")
-    ax.legend(title="skin tone", frameon=False)
+    ax.legend(title="group", frameon=False)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
     fig.savefig(path, dpi=200)
@@ -46,10 +51,11 @@ def plot_factors(factor_table: pd.DataFrame, path: Path):
     x = np.arange(len(cols))
     w = 0.8 / len(factor_table)
     for j, (g, row) in enumerate(factor_table.iterrows()):
-        ax.bar(x + (j - 1) * w, row.values, w, label=g, color=COLORS.get(g, "grey"))
+        ax.bar(x + (j - (len(factor_table) - 1) / 2) * w, row.values, w, label=g,
+               color=color_for(g, j))
     ax.set_xticks(x, cols, rotation=30, ha="right")
     ax.set_ylabel("mean instability (KL)")
-    ax.legend(title="skin tone", frameon=False)
+    ax.legend(title="group", frameon=False)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
     fig.savefig(path, dpi=200)
@@ -68,6 +74,9 @@ def main():
                     help="quality.csv (default: quality columns already in the manifest)")
     ap.add_argument("--dedup", type=float, default=0.95,
                     help="cosine threshold for near-duplicate removal; 0 disables")
+    ap.add_argument("--gap-high", default="dark", help="group expected to be deferred more")
+    ap.add_argument("--gap-low", default="light", help="reference group")
+    ap.add_argument("--no-fix", action="store_true", help="skip consistency-training fix")
     args = ap.parse_args()
 
     manifest = pd.read_csv(args.manifest)
@@ -80,7 +89,9 @@ def main():
     else:
         quality = None
     res = run_audit(manifest, feats, coverage=args.coverage, seed=args.seed, n_boot=args.n_boot,
-                    quality=quality, dedup_threshold=args.dedup or None)
+                    quality=quality, dedup_threshold=args.dedup or None,
+                    consistency_training=not args.no_fix, gap_high=args.gap_high,
+                    gap_low=args.gap_low)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

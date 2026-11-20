@@ -204,7 +204,7 @@ def test_pipeline_end_to_end_finds_gap():
     t = res.scores_table.set_index("score")
     assert {"msp_ensemble", "random_tta", "rotation_asrs", "cf_unweighted", "cf_learned",
             "cf_learned+msp"} <= set(t.index)
-    assert t.loc["msp_ensemble", "referral_gap_dark_minus_light"] > 0  # planted gap is found
+    assert t.loc["msp_ensemble", "referral_gap"] > 0  # planted gap is found
     assert list(res.factor_table.columns) == ["underexpose", "blur"]
     assert res.factor_table.loc["dark"].mean() > res.factor_table.loc["light"].mean()
     assert len(res.test_scores) == (manifest["split"] == "test").sum()
