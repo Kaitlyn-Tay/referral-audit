@@ -52,7 +52,7 @@ def test_ita_orders_light_above_dark():
 
 # ---------- counterfactuals ----------
 
-@pytest.mark.parametrize("factor", list(cf.FACTORS))
+@pytest.mark.parametrize("factor", [f for f in cf.FACTORS if f != "background"])
 def test_factors_keep_size_and_grow_with_severity(img, factor):
     base = np.asarray(img, dtype=float)
     diffs = []
@@ -254,3 +254,16 @@ def test_dedup_links_copies_but_not_same_source():
     cl = duplicate_clusters(X, 0.99, src)
     assert cl[0] == cl[1] and cl[2] != cl[3]
     assert keep_mask(cl, src).tolist() == [True, False, True, True, True, True]
+
+
+def test_background_auto_keeps_skin():
+    arr = np.zeros((60, 60, 3), dtype=np.uint8)
+    arr[:] = [30, 60, 200]  # blue background
+    arr[15:45, 15:45] = [224, 172, 140]  # skin patch
+    arr[28:32, 28:32] = [90, 30, 30]  # dark lesion inside the skin
+    img = Image.fromarray(arr)
+    out = np.asarray(cf.apply(img, "background", 5))
+    assert np.array_equal(out[15:45, 15:45], arr[15:45, 15:45])  # skin and lesion untouched
+    assert not np.array_equal(out[:5, :5], arr[:5, :5])  # background replaced
+    full_skin = Image.fromarray(np.full((40, 40, 3), [224, 172, 140], dtype=np.uint8))
+    assert np.array_equal(np.asarray(cf.apply(full_skin, "background", 3)), np.asarray(full_skin))

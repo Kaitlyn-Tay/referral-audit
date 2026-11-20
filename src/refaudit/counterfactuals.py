@@ -15,6 +15,9 @@ from collections.abc import Callable
 
 import numpy as np
 from PIL import Image, ImageFilter
+from scipy.ndimage import binary_closing, binary_dilation, binary_fill_holes
+
+from refaudit.groups import skin_mask
 
 SEVERITIES = (1, 2, 3, 4, 5)
 
@@ -121,6 +124,24 @@ def background_swap(
     return _to_image(out)
 
 
+def keep_mask_from_skin(img: Image.Image) -> np.ndarray:
+    """Pixels to keep for a background swap: detected skin, smoothed, holes (e.g. the lesion)
+    filled and slightly dilated so the lesion border and nearby skin are never touched."""
+    m = skin_mask(np.asarray(img.convert("RGB")))
+    m = binary_closing(m, iterations=3)
+    m = binary_fill_holes(m)
+    return binary_dilation(m, iterations=4)
+
+
+def background_auto(img: Image.Image, severity: int) -> Image.Image:
+    """Background swap using an automatic skin mask (skin + lesion kept, everything else
+    replaced). If almost everything is skin (a tight close-up) the image is returned unchanged."""
+    mask = keep_mask_from_skin(img)
+    if mask.mean() > 0.97:
+        return img.convert("RGB")
+    return background_swap(img, severity, mask)
+
+
 FACTORS: dict[str, Callable[[Image.Image, int], Image.Image]] = {
     "underexpose": underexpose,
     "overexpose": overexpose,
@@ -130,8 +151,10 @@ FACTORS: dict[str, Callable[[Image.Image, int], Image.Image]] = {
     "blur": blur,
     "jpeg": jpeg,
     "low_res": low_resolution,
+    "background": background_auto,
 }
-"""Factors that need no mask. Background swap needs a mask and is applied separately."""
+"""All capture factors. `background` uses an automatic skin mask; for datasets without people
+(e.g. Waterbirds) pass an explicit mask to `background_swap` instead or leave it out."""
 
 
 def apply(img: Image.Image, factor: str, severity: int) -> Image.Image:
